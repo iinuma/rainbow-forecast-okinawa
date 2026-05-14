@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 🌈 Rainbow Forecast — 沖縄版 那覇中心 100km 圏内 虹スコアバッチ
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 256
+
+Parameters:
+  SNSPlatformArnSandbox:
+    Type: String
+    Default: arn:aws:sns:ap-northeast-1:473259746493:app/APNS_SANDBOX/RainbowForecastAPNs-Sandbox
+
+  SNSPlatformArnProduction:
+    Type: String
+    Default: arn:aws:sns:ap-northeast-1:473259746493:app/APNS/RainbowForecastAPNs-Production
+
+Resources:
+
+  # ── S3 バケット ────────────────────────────────────────────
+  ScoresBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::AccountId}-rainbow-forecast-okinawa"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls:       false
+        BlockPublicPolicy:     false
+        IgnorePublicAcls:      false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ["*"]
+            MaxAge: 600
+
+  ScoresBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ScoresBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ScoresBucket}/*"
+
+  # ── DynamoDB — 目撃情報テーブル ───────────────────────────
+  SightingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: rainbow-sightings-okinawa
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ── 目撃報告 Lambda ────────────────────────────────────────
+  SightingReporterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: rainbow-sighting-reporter-okinawa
+      Handler: handler.lambda_handler
+      CodeUri: sighting_function/
+      Description: 虹の目撃報告を受け取りDynamoDB・S3に保存
+      Environment:
+        Variables:
+          BUCKET_NAME:     !Ref ScoresBucket
+          SIGHTINGS_TABLE: !Ref SightingsTable
+          CENTER_LAT:      "26.45"
+          CENTER_LON:      "127.90"
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref ScoresBucket
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:Scan]
+              Resource: !GetAtt SightingsTable.Arn
+      Events:
+        ReportPost:
+          Type: HttpApi
+          Properties:
+            Path: /report
+            Method: POST
+
+  # ── 虹スコア Lambda ────────────────────────────────────────
+  RainbowFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: rainbow-forecast-okinawa
+      Handler: handler.lambda_handler
+      CodeUri: rainbow_function/
+      Description: 沖縄本島 100km 圏内の虹スコアを 10 分おきに計算して S3 へ保存・push 送信
+      Environment:
+        Variables:
+          BUCKET_NAME:              !Ref ScoresBucket
+          DEVICES_TABLE:            rainbow-device-locations
+          SIGHTINGS_TABLE:          !Ref SightingsTable
+          SNS_PLATFORM_ARN_SANDBOX: !Ref SNSPlatformArnSandbox
+          SNS_PLATFORM_ARN_PROD:    !Ref SNSPlatformArnProduction
+          REGION_ID:                okinawa
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref ScoresBucket
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:Scan
+              Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/rainbow-device-locations"
+            - Effect: Allow
+              Action: dynamodb:Scan
+              Resource: !GetAtt SightingsTable.Arn
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: "*"
+      Events:
+        Every10Min:
+          Type: ScheduleV2
+          Properties:
+            Name: rainbow-forecast-okinawa-10min
+            ScheduleExpression: "rate(10 minutes)"
+            State: ENABLED
+
+Outputs:
+  BucketName:
+    Value: !Ref ScoresBucket
+
+  GeoJsonUrl:
+    Value: !Sub "https://${ScoresBucket}.s3.${AWS::Region}.amazonaws.com/latest.geojson"
+
+  FunctionName:
+    Value: !Ref RainbowFunction
+
+  SightingApiUrl:
+    Description: 虹目撃報告エンドポイント
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/report"
+
+  SightingsJsonUrl:
+    Value: !Sub "https://${ScoresBucket}.s3.${AWS::Region}.amazonaws.com/sightings.json"

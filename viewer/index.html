@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌈 沖縄 虹予報</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+      background: #0d1b2a;
+      color: #e8edf5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      background: rgba(13,27,42,0.95);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      z-index: 1000;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.05rem; letter-spacing: 0.04em; }
+    .header-sub { font-size: 0.7rem; color: #4a6077; }
+    .header-meta { font-size: 0.78rem; color: #7a8fa8; text-align: right; line-height: 1.6; }
+    .sun-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.08);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 0.78rem;
+      margin-left: 8px;
+    }
+
+    /* ── Map wrapper ── */
+    #map-wrap { position: relative; flex: 1; min-height: 0; }
+    #map { height: 100%; }
+
+    /* ── 休止中オーバーレイ ── */
+    #map-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 998;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .mo-box {
+      background: rgba(13,27,42,0.82);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      padding: 28px 40px;
+      text-align: center;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+    .mo-icon  { font-size: 2.8rem; margin-bottom: 10px; }
+    .mo-title { font-size: 1.1rem; font-weight: 700; color: #e8edf5; margin-bottom: 6px; }
+    .mo-sub   { font-size: 0.85rem; color: #7a8fa8; margin-bottom: 14px; }
+    .mo-note  { font-size: 0.75rem; color: rgba(94,231,122,0.75); }
+
+    .legend {
+      position: absolute;
+      bottom: 28px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(13,27,42,0.92);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.78rem;
+      line-height: 1.9;
+      -webkit-backdrop-filter: blur(6px);
+      backdrop-filter: blur(6px);
+    }
+    .legend-title { font-weight: 700; margin-bottom: 4px; color: #c4d0de; }
+    .legend-row { display: flex; align-items: center; gap: 8px; }
+    .legend-separator { margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; }
+    .legend-arrow-note { font-size: 0.75rem; color: #c4d0de; }
+    .dot        { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green  { background: #5ee77a; }
+    .dot-orange { background: #f6ad55; }
+    .dot-dark   { background: #2d3748; }
+    .dot-rain   { background: rgba(99,179,237,0.45); border-radius: 3px; }
+
+    #stats-bar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(13,27,42,0.88);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      -webkit-backdrop-filter: blur(6px);
+      backdrop-filter: blur(6px);
+      line-height: 1.8;
+    }
+    #stats-bar .label { color: #7a8fa8; }
+
+    .lf-popup { line-height: 1.7; font-size: 0.85rem; }
+    .lf-popup .score-big { font-size: 2rem; font-weight: 700; }
+    .lf-popup .row { display: flex; justify-content: space-between; gap: 16px; }
+    .lf-popup .key { color: #888; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🌈 沖縄 虹予報 <small class="header-sub">±50km</small></h1>
+  <div class="header-meta">
+    <span id="updated-at">読み込み中...</span>
+    <span class="sun-badge" id="sun-badge">☀️ —</span>
+  </div>
+</header>
+
+<div id="map-wrap">
+  <div id="map"></div>
+
+  <div id="map-overlay">
+    <div class="mo-box">
+      <div class="mo-icon">🌙</div>
+      <div class="mo-title">日の出まで休止中</div>
+      <div class="mo-sub">虹には太陽が必要です</div>
+      <div class="mo-note">観測エリアは準備中 · しばらくしてからご確認ください</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-title">虹スコア</div>
+    <div class="legend-row"><div class="dot dot-green"></div>70〜100　高い</div>
+    <div class="legend-row"><div class="dot dot-orange"></div>40〜69　見る価値あり</div>
+    <div class="legend-row"><div class="dot dot-dark"></div>0　条件なし</div>
+    <div class="legend-row legend-separator">
+      <div class="dot dot-rain"></div>雨雲
+    </div>
+    <div class="legend-row legend-separator legend-arrow-note">
+      ↑ 矢印の向きに虹
+    </div>
+  </div>
+
+  <div id="stats-bar">
+    <span class="label">観測点</span> <span id="stat-points">—</span>
+    <span class="label">最高スコア</span> <span id="stat-max">—</span>
+    <span id="next-update"></span>
+  </div>
+</div>
+
+<script>
+const GEOJSON_URL      = 'https://473259746493-rainbow-forecast-okinawa.s3.ap-northeast-1.amazonaws.com/latest.geojson';
+const CENTER           = [26.45, 127.90];
+const DISPLAY_RADIUS_M = 50000;
+
+const SIGHTINGS_URL = 'https://473259746493-rainbow-forecast-okinawa.s3.ap-northeast-1.amazonaws.com/sightings.json';
+
+let map, rainLayerGroup, layerGroup, arcLayerGroup, sightingLayerGroup, refreshTimer;
+
+const addrCache = new Map();
+async function fetchAddress(lat, lon) {
+  const key = `${lat},${lon}`;
+  if (addrCache.has(key)) return addrCache.get(key);
+  try {
+    const res  = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=14`,
+      { headers: { 'Accept-Language': 'ja' } }
+    );
+    const d = await res.json();
+    const a = d.address || {};
+    const addr = [a.city || a.town || a.village, a.suburb || a.neighbourhood || a.hamlet]
+      .filter(Boolean).join(' ');
+    addrCache.set(key, addr || d.display_name?.split(',')[0] || `${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+  } catch {
+    addrCache.set(key, `${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+  }
+  return addrCache.get(key);
+}
+
+// ── Map init ──────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map').setView(CENTER, 10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 18,
+  }).addTo(map);
+
+  rainLayerGroup     = L.layerGroup().addTo(map);
+  layerGroup         = L.layerGroup().addTo(map);
+  arcLayerGroup      = L.layerGroup().addTo(map);
+  sightingLayerGroup = L.layerGroup().addTo(map);
+
+  L.circle(CENTER, {
+    radius: DISPLAY_RADIUS_M,
+    color: 'rgba(144,205,244,0.25)',
+    fill: false,
+    dashArray: '6 6',
+    weight: 1,
+  }).addTo(map);
+
+  map.on('popupopen', async (e) => {
+    const el = e.popup.getElement();
+    const addrEl = el?.querySelector('.addr-text');
+    if (!addrEl || addrEl.dataset.loaded) return;
+    addrEl.dataset.loaded = '1';
+    addrEl.textContent = await fetchAddress(+addrEl.dataset.lat, +addrEl.dataset.lon);
+  });
+}
+
+// ── Utilities ─────────────────────────────────────────────────
+function scoreColor(s) {
+  if (s >= 70) return '#5ee77a';
+  if (s >= 40) return '#f6ad55';
+  if (s >  0)  return '#90cdf4';
+  return '#2d3748';
+}
+function scoreRadius(s) {
+  if (s >= 70) return 10;
+  if (s >= 40) return 8;
+  if (s >  0)  return 6;
+  return 4;
+}
+
+const CARD16 = ['北','北北東','北東','東北東','東','東南東','南東','南南東',
+                 '南','南南西','南西','西南西','西','西北西','北西','北北西'];
+function azToCardinal(az) { return CARD16[Math.round(az / 22.5) % 16]; }
+
+// ── 雨雲レイヤー ──────────────────────────────────────────────
+function renderRainLayer(features) {
+  rainLayerGroup.clearLayers();
+  for (const f of features) {
+    if (f.properties.precip < 0.1) continue;
+    const [lon, lat] = f.geometry.coordinates;
+    const intensity = Math.min(f.properties.precip / 5.0, 1.0);
+    L.circle([lat, lon], {
+      radius: 12000,
+      color: 'transparent',
+      fillColor: '#63b3ed',
+      fillOpacity: 0.06 + intensity * 0.10,
+      interactive: false,
+    }).addTo(rainLayerGroup);
+  }
+}
+
+// ── 休止中オーバーレイ ────────────────────────────────────────
+function showOverlay(reason) {
+  const el = document.getElementById('map-overlay');
+  el.querySelector('.mo-icon').textContent  = reason === 'nighttime' ? '🌙' : '☀️';
+  el.querySelector('.mo-title').textContent = reason === 'nighttime' ? '日の出まで休止中' : '太陽高度が高すぎます';
+  el.querySelector('.mo-sub').textContent   = reason === 'nighttime' ? '虹には太陽が必要です' : '虹が出やすい時間帯：早朝・夕方';
+  el.style.display = 'flex';
+}
+function hideOverlay() {
+  document.getElementById('map-overlay').style.display = 'none';
+}
+
+// ── スコア描画 ────────────────────────────────────────────────
+function renderScores(data) {
+  layerGroup.clearLayers();
+  rainLayerGroup.clearLayers();
+  arcLayerGroup.clearLayers();
+  hideOverlay();
+
+  const genAt = data.generated_at
+    ? new Date(data.generated_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+    : '—';
+  const rainbowDir = typeof data.sun_az === 'number'
+    ? azToCardinal((data.sun_az + 180) % 360) : '—';
+
+  document.getElementById('updated-at').textContent = `更新 ${genAt} JST`;
+  document.getElementById('sun-badge').textContent  = `☀️ ${data.sun_alt ?? '—'}° · ${rainbowDir}に虹`;
+  document.getElementById('next-update').textContent = '· 10分ごと更新';
+
+  if (data.skip_reason) {
+    showOverlay(data.skip_reason);
+    document.getElementById('sun-badge').textContent   = `☀️ ${data.sun_alt ?? '—'}°`;
+    document.getElementById('stat-points').textContent = '—';
+    document.getElementById('stat-max').textContent    = '—';
+    return;
+  }
+
+  if (data.rain_only) {
+    hideOverlay();
+    const icon = data.sun_alt < 0 ? '🌅' : '☀️';
+    document.getElementById('sun-badge').textContent   = `${icon} ${data.sun_alt}° · 雨雲あり`;
+    document.getElementById('stat-points').textContent = '—';
+    document.getElementById('stat-max').textContent    = '—';
+    renderRainLayer(data.features);
+    return;
+  }
+
+  renderRainLayer(data.features);
+
+  const antiSolar = (data.sun_az + 180) % 360;
+  let maxScore = 0;
+  for (const f of data.features) {
+    const { score, cloud_cover, precip, sun_alt: sa } = f.properties;
+    const [lon, lat] = f.geometry.coordinates;
+    maxScore = Math.max(maxScore, score);
+    const color = scoreColor(score);
+    L.circleMarker([lat, lon], {
+      radius:      scoreRadius(score),
+      fillColor:   color,
+      color:       'transparent',
+      fillOpacity: score > 0 ? 0.75 : 0.2,
+    })
+    .bindPopup(`
+      <div class="lf-popup">
+        <div class="score-big" style="color:${color}">${score}</div>
+        <div style="color:#888;font-size:0.75rem;margin-bottom:6px">虹スコア</div>
+        <div class="row"><span class="key">雲量</span><span>${cloud_cover}%</span></div>
+        <div class="row"><span class="key">降水量</span><span>${precip} mm/h</span></div>
+        <div class="row"><span class="key">太陽高度</span><span>${sa}°</span></div>
+        <div class="row"><span class="key">場所</span><span class="addr-text" data-lat="${lat}" data-lon="${lon}">取得中…</span></div>
+      </div>
+    `)
+    .addTo(layerGroup);
+
+    if (score >= 70) {
+      const arrowHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 20 20" style="transform:rotate(${antiSolar}deg);transform-origin:center;display:block;filter:drop-shadow(0 0 3px rgba(0,0,0,0.9))"><polygon points="10,2 5,9 10,7 15,9" fill="white" stroke="black" stroke-width="1" stroke-linejoin="round"/><rect x="8.5" y="7" width="3" height="10" rx="1.5" fill="white" stroke="black" stroke-width="1"/></svg>`;
+      L.marker([lat, lon], {
+        icon: L.divIcon({ html: arrowHtml, iconSize: [22, 22], iconAnchor: [11, 11], className: '' }),
+        interactive: false,
+      }).addTo(layerGroup);
+    }
+  }
+
+  document.getElementById('stat-points').textContent = data.features.length;
+  document.getElementById('stat-max').textContent    = maxScore;
+}
+
+// ── 目撃情報 ──────────────────────────────────────────────────
+async function renderSightings() {
+  sightingLayerGroup.clearLayers();
+  try {
+    const res  = await fetch(SIGHTINGS_URL + '?t=' + Date.now());
+    const data = await res.json();
+    for (const f of data.features || []) {
+      const [lon, lat] = f.geometry.coordinates;
+      const count = f.properties.count || 1;
+      const t = new Date(f.properties.last_timestamp || f.properties.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      const label = count > 1 ? `🌈×${count}` : '🌈';
+      const countText = count > 1 ? `${count}回` : '1回';
+      L.marker([lat, lon], {
+        icon: L.divIcon({ html: `<span style="font-size:18px;filter:drop-shadow(0 0 2px #000)">${label}</span>`, iconSize: [count > 1 ? 56 : 28, 24], iconAnchor: [count > 1 ? 28 : 14, 12], className: '' }),
+      })
+      .bindPopup(`<div class="lf-popup"><b>虹が見えた！</b><br><span style="color:#888">最終 ${t} · ${countText}</span><br><span class="addr-text" data-lat="${lat}" data-lon="${lon}">取得中…</span></div>`)
+      .addTo(sightingLayerGroup);
+    }
+  } catch {}
+}
+
+async function refresh() {
+  clearTimeout(refreshTimer);
+  try {
+    const res  = await fetch(GEOJSON_URL + '?t=' + Date.now());
+    const data = await res.json();
+    renderScores(data);
+  } catch (e) {
+    document.getElementById('updated-at').textContent = '取得失敗 — リトライ中...';
+  }
+  await renderSightings();
+  refreshTimer = setTimeout(refresh, 10 * 60 * 1000);
+}
+
+initMap();
+refresh();
+</script>
+</body>
+</html>
