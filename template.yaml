@@ -76,7 +76,7 @@ Resources:
           BUCKET_NAME:     !Ref ScoresBucket
           SIGHTINGS_TABLE: !Ref SightingsTable
           CENTER_LAT:      "26.45"
-          CENTER_LON:      "127.90"
+          CENTER_LON:      "127.75"
       Policies:
         - S3WritePolicy:
             BucketName: !Ref ScoresBucket

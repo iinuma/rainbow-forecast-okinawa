@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 
 # ── Config ────────────────────────────────────────────────────
 CENTER_LAT   = 26.45
-CENTER_LON   = 127.90
+CENTER_LON   = 127.75
 SIDE_KM      = 100
 GRID_KM      = 4
 WEATHER_KM   = 10
