@@ -241,10 +241,10 @@ function renderRainLayer(features) {
     const [lon, lat] = f.geometry.coordinates;
     const intensity = Math.min(f.properties.precip / 5.0, 1.0);
     L.circle([lat, lon], {
-      radius: 12000,
+      radius: 4000,
       color: 'transparent',
       fillColor: '#63b3ed',
-      fillOpacity: 0.06 + intensity * 0.10,
+      fillOpacity: 0.03 + intensity * 0.05,
       interactive: false,
     }).addTo(rainLayerGroup);
   }
