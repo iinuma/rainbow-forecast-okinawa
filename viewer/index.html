@@ -371,6 +371,32 @@ async function refresh() {
   refreshTimer = setTimeout(refresh, 10 * 60 * 1000);
 }
 
+
+let userMarker = null;
+
+function setUserLocation(lat, lon) {
+  if (userMarker) {
+    userMarker.setLatLng([lat, lon]);
+  } else {
+    userMarker = L.circleMarker([lat, lon], {
+      radius: 9,
+      color: "#fff",
+      fillColor: "#4299e1",
+      fillOpacity: 1,
+      weight: 2.5,
+      pane: "markerPane",
+    }).addTo(map).bindTooltip("現在地", { permanent: false, direction: "top" });
+  }
+}
+
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => setUserLocation(pos.coords.latitude, pos.coords.longitude),
+    () => {},
+    { enableHighAccuracy: false, timeout: 10000 }
+  );
+}
+
 initMap();
 refresh();
 </script>
