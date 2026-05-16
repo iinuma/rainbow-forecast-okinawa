@@ -6,6 +6,7 @@
   <title>🌈 沖縄 虹予報</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -29,7 +30,6 @@
       flex-shrink: 0;
     }
     header h1 { font-size: 1.05rem; letter-spacing: 0.04em; }
-    .header-sub { font-size: 0.7rem; color: #4a6077; }
     .header-meta { font-size: 0.78rem; color: #7a8fa8; text-align: right; line-height: 1.6; }
     .sun-badge {
       display: inline-block;
@@ -76,9 +76,9 @@
       background: rgba(13,27,42,0.92);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 10px;
-      padding: 10px 14px;
-      font-size: 0.78rem;
-      line-height: 1.9;
+      padding: 7px 10px;
+      font-size: 0.74rem;
+      line-height: 1.8;
       -webkit-backdrop-filter: blur(6px);
       backdrop-filter: blur(6px);
     }
@@ -92,35 +92,92 @@
     .dot-dark   { background: #2d3748; }
     .dot-rain   { background: rgba(99,179,237,0.45); border-radius: 3px; }
 
-    #stats-bar {
+
+    /* ── Forecast bar ── */
+    #forecast-bar {
       position: absolute;
-      top: 10px;
+      bottom: 4px;
       left: 10px;
       z-index: 1000;
-      background: rgba(13,27,42,0.88);
-      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(13,27,42,0.92);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 10px;
-      padding: 8px 14px;
-      font-size: 0.8rem;
+      padding: 8px 12px;
       -webkit-backdrop-filter: blur(6px);
       backdrop-filter: blur(6px);
-      line-height: 1.8;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      max-width: calc(100% - 180px);
     }
-    #stats-bar .label { color: #7a8fa8; }
-
+    #forecast-bar .fb-label {
+      font-size: 0.72rem;
+      color: #7a8fa8;
+      white-space: nowrap;
+    }
+    .fb-btn {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #c4d0de;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .fb-btn:hover { background: rgba(255,255,255,0.14); }
+    .fb-btn.active {
+      background: rgba(94,231,122,0.2);
+      border-color: #5ee77a;
+      color: #5ee77a;
+    }
+    .fb-btn.live-btn {
+      background: rgba(66,153,225,0.15);
+      border-color: rgba(66,153,225,0.5);
+      color: #90cdf4;
+    }
+    .fb-btn.live-btn.active {
+      background: rgba(66,153,225,0.35);
+      border-color: #90cdf4;
+      color: #fff;
+    }
+    #play-btn {
+      font-size: 0.85rem;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #c4d0de;
+      cursor: pointer;
+    }
+    #play-btn:hover { background: rgba(255,255,255,0.14); }
     .lf-popup { line-height: 1.7; font-size: 0.85rem; }
     .lf-popup .score-big { font-size: 2rem; font-weight: 700; }
     .lf-popup .row { display: flex; justify-content: space-between; gap: 16px; }
     .lf-popup .key { color: #888; }
+    #sun-window {
+      font-size: 0.63rem;
+      color: #4a6a87;
+      margin-top: 2px;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    #sun-window .win { color: rgba(94,231,122,0.85); }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>🌈 沖縄 虹予報 <small class="header-sub">±50km</small></h1>
+  <div>
+    <h1>🌈 沖縄 虹予報</h1>
+    <div id="sun-window" class="sun-window">—</div>
+  </div>
   <div class="header-meta">
     <span id="updated-at">読み込み中...</span>
     <span class="sun-badge" id="sun-badge">☀️ —</span>
+    <span class="sun-badge" id="stat-max-badge" style="display:none">↑&thinsp;<span id="stat-max">—</span></span>
   </div>
 </header>
 
@@ -139,7 +196,7 @@
   <div class="legend">
     <div class="legend-title">虹スコア</div>
     <div class="legend-row"><div class="dot dot-green"></div>70〜100　高い</div>
-    <div class="legend-row"><div class="dot dot-orange"></div>40〜69　見る価値あり</div>
+    <div class="legend-row"><div class="dot dot-orange"></div>40〜69　やや期待</div>
     <div class="legend-row"><div class="dot dot-dark"></div>0　条件なし</div>
     <div class="legend-row legend-separator">
       <div class="dot dot-rain"></div>雨雲
@@ -149,10 +206,11 @@
     </div>
   </div>
 
-  <div id="stats-bar">
-    <span class="label">観測点</span> <span id="stat-points">—</span>
-    <span class="label">最高スコア</span> <span id="stat-max">—</span>
-    <span id="next-update"></span>
+  <div id="forecast-bar">
+    <span class="fb-label">📅</span>
+    <button type="button" id="play-btn" title="予報アニメーション再生">▶</button>
+    <button type="button" class="fb-btn live-btn active" id="btn-live" onclick="selectLive()">Live</button>
+    <span id="forecast-btns"></span>
   </div>
 </div>
 
@@ -162,6 +220,180 @@ const CENTER           = [26.45, 127.75];
 const DISPLAY_RADIUS_M = 50000;
 
 const SIGHTINGS_URL = 'https://473259746493-rainbow-forecast-okinawa.s3.ap-northeast-1.amazonaws.com/sightings.json';
+
+const FORECAST_URL     = 'https://473259746493-rainbow-forecast-okinawa.s3.ap-northeast-1.amazonaws.com/forecast.json';
+const CENTER_LAT       = 26.45;
+const CENTER_LON       = 127.75;
+const GRID_KM          = 4;
+const TZ     = 'Asia/Tokyo';
+const LOCALE = 'ja-JP';
+const HALF_N           = 12;
+
+// ── Grid (mirrors Python generate_grid) ──────────────────────
+let _gridPoints = null;
+function getGridPoints() {
+  if (_gridPoints) return _gridPoints;
+  const lat_per_km = 1.0 / 111.0;
+  const lon_per_km = 1.0 / (111.0 * Math.cos(CENTER_LAT * Math.PI / 180));
+  const pts = [];
+  for (let i = -HALF_N; i <= HALF_N; i++) {
+    for (let j = -HALF_N; j <= HALF_N; j++) {
+      pts.push([
+        Math.round((CENTER_LAT + i * GRID_KM * lat_per_km) * 1e5) / 1e5,
+        Math.round((CENTER_LON + j * GRID_KM * lon_per_km) * 1e5) / 1e5,
+      ]);
+    }
+  }
+  _gridPoints = pts;
+  return pts;
+}
+
+// ── Forecast state ────────────────────────────────────────────
+let forecastFrames = [];
+let currentFrameIdx = -1;
+let playTimer = null;
+let liveData = null;
+
+function localLabel(timeUtc) {
+  const d = new Date(timeUtc + ':00Z');
+  return d.toLocaleTimeString('ja-JP', { hour: 'numeric', timeZone: 'Asia/Tokyo' });
+}
+
+function buildForecastButtons() {
+  const container = document.getElementById('forecast-btns');
+  container.innerHTML = '';
+  forecastFrames.forEach((frame, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fb-btn';
+    btn.textContent = localLabel(frame.time_utc);
+    btn.title = frame.time_utc + ' UTC · 最高スコア ' + frame.max_score;
+    if (frame.max_score >= 70)  btn.style.borderColor = 'rgba(94,231,122,0.4)';
+    else if (frame.max_score >= 40) btn.style.borderColor = 'rgba(246,173,85,0.4)';
+    btn.onclick = () => selectFrame(idx);
+    container.appendChild(btn);
+  });
+}
+
+function updateFrameButtons() {
+  document.querySelectorAll('#forecast-btns .fb-btn').forEach((btn, idx) => {
+    btn.classList.toggle('active', idx === currentFrameIdx);
+  });
+  document.getElementById('btn-live').classList.toggle('active', currentFrameIdx === -1);
+}
+
+function selectLive() {
+  stopPlay();
+  currentFrameIdx = -1;
+  updateFrameButtons();
+  if (liveData) renderScores(liveData);
+}
+
+function selectFrame(idx) {
+  currentFrameIdx = idx;
+  updateFrameButtons();
+  renderForecastFrame(forecastFrames[idx]);
+}
+
+function renderForecastFrame(frame) {
+  layerGroup.clearLayers();
+  rainLayerGroup.clearLayers();
+  arcLayerGroup.clearLayers();
+  hideOverlay();
+
+  const pts = getGridPoints();
+  const localTime = new Date(frame.time_utc + ':00Z').toLocaleTimeString('ja-JP',
+    { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' });
+  document.getElementById('updated-at').textContent = `予報 ${localTime} JST`;
+
+  const rainbowDir = azToCardinal((frame.sun_az + 180) % 360);
+  if (frame.in_rainbow) {
+    document.getElementById('sun-badge').textContent = `☀️ ${frame.sun_alt}° · ${rainbowDir}を見て`;
+    renderRainbowArc(frame.sun_az);
+  } else {
+    document.getElementById('sun-badge').textContent = `☀️ ${frame.sun_alt}°`;
+  }
+
+  let maxScore = 0;
+  const antiSolar = (frame.sun_az + 180) % 360;
+  frame.scores.forEach((score, i) => {
+    if (i >= pts.length) return;
+    const [lat, lon] = pts[i];
+    const precip = frame.precips[i] || 0;
+    maxScore = Math.max(maxScore, score);
+
+    if (precip >= 0.1) {
+      const intensity = Math.min(precip / 5.0, 1.0);
+      L.circle([lat, lon], {
+        radius: 4000 * GRID_KM / 2, color: 'transparent',
+        fillColor: '#63b3ed',
+        fillOpacity: 0.04 + intensity * 0.07,
+        interactive: false,
+      }).addTo(rainLayerGroup);
+    }
+
+    const color = scoreColor(score);
+    L.circleMarker([lat, lon], {
+      radius: scoreRadius(score),
+      color: 'transparent',
+      fillColor: color,
+      fillOpacity: score > 0 ? 0.75 : 0.2,
+    })
+    .bindPopup(`
+      <div class="lf-popup">
+        <div class="score-big" style="color:${color}">${score}</div>
+        <div style="color:#888;font-size:0.75rem;margin-bottom:6px">予報スコア · ${localTime} JST</div>
+        <div class="row"><span class="key">降水量</span><span>${precip} mm/h</span></div>
+        <div class="row"><span class="key">太陽高度</span><span>${frame.sun_alt}°</span></div>
+      </div>
+    `)
+    .addTo(layerGroup);
+
+    if (score >= 70) {
+      const arrowHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 20 20" style="transform:rotate(${antiSolar}deg);transform-origin:center;display:block;filter:drop-shadow(0 0 3px rgba(0,0,0,0.9))"><polygon points="10,2 5,9 10,7 15,9" fill="white" stroke="black" stroke-width="1" stroke-linejoin="round"/><rect x="8.5" y="7" width="3" height="10" rx="1.5" fill="white" stroke="black" stroke-width="1"/></svg>`;
+      L.marker([lat, lon], {
+        icon: L.divIcon({ html: arrowHtml, iconSize: [22, 22], iconAnchor: [11, 11], className: '' }),
+        interactive: false,
+      }).addTo(layerGroup);
+    }
+  });
+  document.getElementById('stat-max').textContent    = maxScore; document.getElementById('stat-max-badge').style.display = '';
+  if (frame.in_rainbow && maxScore === 0) {
+    const hasRain = frame.precips && frame.precips.some(p => p >= 0.1);
+    if (!hasRain) showOverlay('no_rain');
+  }
+  else if (!frame.in_rainbow && frame.sun_alt > 0) showOverlay('sun_too_high');
+  else if (!frame.in_rainbow && frame.sun_alt <= 0) showOverlay('nighttime');
+}
+
+function stopPlay() {
+  clearInterval(playTimer);
+  playTimer = null;
+  document.getElementById('play-btn').textContent = '▶';
+}
+
+function togglePlay() {
+  if (playTimer) { stopPlay(); return; }
+  if (forecastFrames.length === 0) return;
+  document.getElementById('play-btn').textContent = '⏹';
+  let idx = currentFrameIdx < 0 ? 0 : (currentFrameIdx + 1) % forecastFrames.length;
+  selectFrame(idx);
+  playTimer = setInterval(() => {
+    idx = (idx + 1) % forecastFrames.length;
+    selectFrame(idx);
+    if (idx === forecastFrames.length - 1) stopPlay();
+  }, 1500);
+}
+
+async function loadForecast() {
+  try {
+    const res  = await fetch(FORECAST_URL + '?t=' + Date.now());
+    const data = await res.json();
+    forecastFrames = data.frames || [];
+    buildForecastButtons();
+  } catch {}
+}
+
 
 let map, rainLayerGroup, layerGroup, arcLayerGroup, sightingLayerGroup, refreshTimer;
 
@@ -185,9 +417,69 @@ async function fetchAddress(lat, lon) {
   return addrCache.get(key);
 }
 
+function _alt42cross(lat, lon, t0, t1, asc) {
+  let lo = +t0, hi = +t1;
+  for (let n = 0; n < 24; n++) {
+    const mid = (lo + hi) / 2;
+    const a = SunCalc.getPosition(new Date(mid), lat, lon).altitude * 180 / Math.PI;
+    if (asc ? a < 42 : a > 42) lo = mid; else hi = mid;
+  }
+  return new Date((lo + hi) / 2);
+}
+function initSolarWindows() {
+  try {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const st  = SunCalc.getTimes(today, CENTER_LAT, CENTER_LON);
+    const fmt = d => d.toLocaleTimeString(LOCALE, {hour:'2-digit', minute:'2-digit', timeZone: TZ});
+    const noon = st.solarNoon;
+    const nAlt = SunCalc.getPosition(noon, CENTER_LAT, CENTER_LON).altitude * 180 / Math.PI;
+    let html;
+    if (nAlt <= 42) {
+      html = `<span class="win">🌈 ${fmt(st.sunrise)}&thinsp;〜&thinsp;${fmt(st.sunset)}</span>`;
+    } else {
+      const mE = _alt42cross(CENTER_LAT, CENTER_LON, st.sunrise, noon, true);
+      const eS = _alt42cross(CENTER_LAT, CENTER_LON, noon, st.sunset, false);
+      html = `<span class="win">🌈&thinsp;${fmt(st.sunrise)}&thinsp;〜&thinsp;${fmt(mE)}</span>`
+           + `<span style="color:#253d52">&ensp;—&ensp;</span>`
+           + `<span class="win">${fmt(eS)}&thinsp;〜&thinsp;${fmt(st.sunset)}&thinsp;🌈</span>`;
+    }
+    document.getElementById('sun-window').innerHTML = html;
+  } catch(e) { document.getElementById('sun-window').textContent = ''; }
+}
+
+function renderRainbowArc(sunAz) {
+  arcLayerGroup.clearLayers();
+  const rainbowAz = (sunAz + 180) % 360;
+  const spread    = 25;
+  const r         = DISPLAY_RADIUS_M * 0.88;
+  const cosLat    = Math.cos(CENTER[0] * Math.PI / 180);
+  const pts       = [CENTER];
+  for (let i = 0; i <= 30; i++) {
+    const az    = rainbowAz - spread + spread * 2 * i / 30;
+    const azRad = az * Math.PI / 180;
+    pts.push([
+      CENTER[0] + Math.cos(azRad) * r / 111000,
+      CENTER[1] + Math.sin(azRad) * r / (111000 * cosLat),
+    ]);
+  }
+  pts.push(CENTER);
+  L.polygon(pts, {
+    color: 'rgba(246,224,94,0.35)',
+    weight: 1,
+    fillColor: '#f6e05e',
+    fillOpacity: 0.08,
+    interactive: false,
+  }).addTo(arcLayerGroup);
+}
 // ── Map init ──────────────────────────────────────────────────
 function initMap() {
-  map = L.map('map').setView(CENTER, 10);
+  const _halfKm = HALF_N * GRID_KM;
+  const _latD   = _halfKm / 111.0;
+  const _lonD   = _halfKm / (111.0 * Math.cos(CENTER_LAT * Math.PI / 180));
+  map = L.map('map').fitBounds([
+    [CENTER_LAT - _latD, CENTER_LON - _lonD],
+    [CENTER_LAT + _latD, CENTER_LON + _lonD],
+  ], { padding: [24, 24] });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 18,
@@ -253,9 +545,19 @@ function renderRainLayer(features) {
 // ── 休止中オーバーレイ ────────────────────────────────────────
 function showOverlay(reason) {
   const el = document.getElementById('map-overlay');
-  el.querySelector('.mo-icon').textContent  = reason === 'nighttime' ? '🌙' : '☀️';
-  el.querySelector('.mo-title').textContent = reason === 'nighttime' ? '日の出まで休止中' : '太陽高度が高すぎます';
-  el.querySelector('.mo-sub').textContent   = reason === 'nighttime' ? '虹には太陽が必要です' : '虹が出やすい時間帯：早朝・夕方';
+  if (reason === 'nighttime') {
+    el.querySelector('.mo-icon').textContent  = '🌙';
+    el.querySelector('.mo-title').textContent = '日の出まで休止中';
+    el.querySelector('.mo-sub').textContent   = '虹には太陽が必要です';
+  } else if (reason === 'no_rain') {
+    el.querySelector('.mo-icon').textContent  = '🌤';
+    el.querySelector('.mo-title').textContent = '雨雲なし';
+    el.querySelector('.mo-sub').textContent   = '虹の条件がありません（雨の予報なし）';
+  } else {
+    el.querySelector('.mo-icon').textContent  = '☀️';
+    el.querySelector('.mo-title').textContent = '太陽高度が高すぎます';
+    el.querySelector('.mo-sub').textContent   = '虹が出やすい時間帯：早朝・夕方';
+  }
   el.style.display = 'flex';
 }
 function hideOverlay() {
@@ -277,23 +579,21 @@ function renderScores(data) {
 
   document.getElementById('updated-at').textContent = `更新 ${genAt} JST`;
   document.getElementById('sun-badge').textContent  = `☀️ ${data.sun_alt ?? '—'}° · ${rainbowDir}に虹`;
-  document.getElementById('next-update').textContent = '· 10分ごと更新';
 
   if (data.skip_reason) {
     showOverlay(data.skip_reason);
     document.getElementById('sun-badge').textContent   = `☀️ ${data.sun_alt ?? '—'}°`;
-    document.getElementById('stat-points').textContent = '—';
-    document.getElementById('stat-max').textContent    = '—';
+    document.getElementById('stat-max').textContent = '—'; document.getElementById('stat-max-badge').style.display = 'none';
     return;
   }
 
   if (data.rain_only) {
-    hideOverlay();
-    const icon = data.sun_alt < 0 ? '🌅' : '☀️';
-    document.getElementById('sun-badge').textContent   = `${icon} ${data.sun_alt}° · 雨雲あり`;
-    document.getElementById('stat-points').textContent = '—';
-    document.getElementById('stat-max').textContent    = '—';
+    const icon = data.sun_alt != null && data.sun_alt < 0 ? '🌅' : '☀️';
+    document.getElementById('sun-badge').textContent   = `${icon} ${data.sun_alt ?? '—'}°`;
+    document.getElementById('stat-max').textContent = '—'; document.getElementById('stat-max-badge').style.display = 'none';
     renderRainLayer(data.features);
+    if (data.sun_alt != null && data.sun_alt <= 0) showOverlay('nighttime');
+    else showOverlay('sun_too_high');
     return;
   }
 
@@ -332,9 +632,15 @@ function renderScores(data) {
       }).addTo(layerGroup);
     }
   }
-
-  document.getElementById('stat-points').textContent = data.features.length;
-  document.getElementById('stat-max').textContent    = maxScore;
+  document.getElementById('stat-max').textContent    = maxScore; document.getElementById('stat-max-badge').style.display = '';
+  const _hasRain = data.features.some(f => f.properties.precip >= 0.1);
+  const inRainbow = data.sun_alt != null && data.sun_alt >= 0 && data.sun_alt <= 42;
+  if (!inRainbow) {
+    if (data.sun_alt <= 0) showOverlay('nighttime');
+    else showOverlay('sun_too_high');
+  } else if (maxScore === 0 && !_hasRain) {
+    showOverlay('no_rain');
+  }
 }
 
 // ── 目撃情報 ──────────────────────────────────────────────────
@@ -363,11 +669,13 @@ async function refresh() {
   try {
     const res  = await fetch(GEOJSON_URL + '?t=' + Date.now());
     const data = await res.json();
-    renderScores(data);
+    liveData = data;
+    if (currentFrameIdx === -1) renderScores(data);
   } catch (e) {
     document.getElementById('updated-at').textContent = '取得失敗 — リトライ中...';
   }
   await renderSightings();
+  await loadForecast();
   refreshTimer = setTimeout(refresh, 10 * 60 * 1000);
 }
 
@@ -389,7 +697,7 @@ function setUserLocation(lat, lon) {
   }
 }
 
-if (navigator.geolocation) {
+if (navigator.geolocation && !new URLSearchParams(location.search).get('native')) {
   navigator.geolocation.getCurrentPosition(
     pos => setUserLocation(pos.coords.latitude, pos.coords.longitude),
     () => {},
@@ -398,6 +706,8 @@ if (navigator.geolocation) {
 }
 
 initMap();
+initSolarWindows();
+document.getElementById('play-btn').addEventListener('click', togglePlay);
 refresh();
 </script>
 </body>

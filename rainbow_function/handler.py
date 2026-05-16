@@ -142,22 +142,39 @@ def fetch_weather_map():
     url  = (
         'https://api.open-meteo.com/v1/forecast'
         f'?latitude={lats}&longitude={lons}'
-        '&current=cloud_cover,precipitation&timezone=UTC'
+        '&current=cloud_cover,precipitation'
+        '&hourly=cloud_cover,precipitation'
+        '&forecast_days=2&timezone=UTC'
     )
     req = urllib.request.Request(url, headers={'User-Agent': 'rainbow-forecast/1.0'})
-    with urllib.request.urlopen(req, timeout=25) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     if isinstance(data, dict):
         data = [data]
 
-    weather_map = {}
+    current_map = {}
+    hourly_maps = {}
+    hour_times  = None
+
     for (idx, _, _), item in zip(sample_points, data):
         c = item['current']
-        weather_map[idx] = {
+        current_map[idx] = {
             'cloud_cover':   c.get('cloud_cover', 0),
             'precipitation': c.get('precipitation', 0.0),
         }
-    return weather_map
+        if hour_times is None:
+            hour_times = item['hourly']['time']
+        h_cc = item['hourly']['cloud_cover']
+        h_pr = item['hourly']['precipitation']
+        for h, (cc, pr) in enumerate(zip(h_cc, h_pr)):
+            if h not in hourly_maps:
+                hourly_maps[h] = {}
+            hourly_maps[h][idx] = {
+                'cloud_cover':   cc if cc is not None else 0,
+                'precipitation': pr if pr is not None else 0.0,
+            }
+
+    return current_map, hourly_maps, hour_times or []
 
 def lookup_weather(weather_map, lat, lon):
     lat_per_km = 1.0 / 111.0
@@ -215,6 +232,8 @@ def lambda_handler(event, context):
     in_rain_window    = -5 <= sun_alt <= 60
     in_rainbow_window =  0 <= sun_alt <= 42
 
+    current_map, hourly_maps, hour_times = fetch_weather_map()
+
     if not in_rain_window:
         reason = 'nighttime' if sun_alt < -5 else 'sun_too_high'
         payload = {
@@ -226,17 +245,17 @@ def lambda_handler(event, context):
             'features': [],
         }
         _upload(payload)
+        _build_and_upload_forecast(now, points, hourly_maps, hour_times)
         _refresh_sightings_json()
         print(f'[SKIP] {reason} sun_alt={sun_alt:.1f}°')
         return {'statusCode': 200, 'body': reason}
 
     anti_solar  = (sun_az + 180) % 360
-    weather_map = fetch_weather_map()
     features    = []
     for (lat, lon) in points:
-        w = lookup_weather(weather_map, lat, lon)
+        w = lookup_weather(current_map, lat, lon)
         if in_rainbow_window:
-            rain  = has_directional_rain(weather_map, lat, lon, anti_solar)
+            rain  = has_directional_rain(current_map, lat, lon, anti_solar)
             score = rainbow_score(sun_alt, w['cloud_cover'], w['precipitation'], rain)
         else:
             rain  = False
@@ -263,6 +282,7 @@ def lambda_handler(event, context):
         'features':     features,
     }
     _upload(payload)
+    _build_and_upload_forecast(now, points, hourly_maps, hour_times)
 
     if in_rainbow_window:
         max_score = max((f['properties']['score'] for f in features), default=0)
@@ -273,6 +293,60 @@ def lambda_handler(event, context):
 
     _refresh_sightings_json()
     return {'statusCode': 200, 'body': f'Processed {len(features)} points'}
+
+def _build_and_upload_forecast(now, points, hourly_maps, hour_times):
+    """次の6時間分の虹スコア予報を forecast.json として S3 に保存する。"""
+    frames = []
+    for h_idx, time_str in enumerate(hour_times):
+        try:
+            frame_dt = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if frame_dt <= now:
+            continue
+        if len(frames) >= 6:
+            break
+
+        h_map = hourly_maps.get(h_idx)
+        if h_map is None:
+            continue
+
+        h_alt, h_az = sun_position(frame_dt, CENTER_LAT, CENTER_LON)
+        in_rainbow  = 0 <= h_alt <= 42
+        anti_solar  = (h_az + 180) % 360
+
+        scores  = []
+        precips = []
+        for (lat, lon) in points:
+            w = lookup_weather(h_map, lat, lon)
+            if in_rainbow:
+                rain  = has_directional_rain(h_map, lat, lon, anti_solar)
+                score = rainbow_score(h_alt, w['cloud_cover'], w['precipitation'], rain)
+            else:
+                score = 0
+            scores.append(score)
+            precips.append(round(w['precipitation'], 2))
+
+        frames.append({
+            'time_utc':   time_str,
+            'sun_alt':    round(h_alt, 1),
+            'sun_az':     round(h_az, 1),
+            'in_rainbow': in_rainbow,
+            'scores':     scores,
+            'precips':    precips,
+            'max_score':  max(scores),
+        })
+
+    forecast = {
+        'generated_at': now.isoformat(),
+        'frames':       frames,
+    }
+    boto3.client('s3').put_object(
+        Bucket=BUCKET, Key='forecast.json',
+        Body=json.dumps(forecast, ensure_ascii=False).encode('utf-8'),
+        ContentType='application/json', CacheControl='max-age=540',
+    )
+    print(f'[FORECAST] frames={len(frames)}')
 
 def _refresh_sightings_json():
     if not SIGHTINGS_TABLE:
