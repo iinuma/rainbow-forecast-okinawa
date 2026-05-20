@@ -130,12 +130,13 @@ def _get_precip_at(lat, lon, weather_map, jma_map):
     return lookup_weather(weather_map, lat, lon)['precipitation']
 
 # ── Rainbow score ─────────────────────────────────────────────
-def rainbow_score(sun_alt, cloud_cover, local_precip, directional_rain):
+def rainbow_score(sun_alt, cloud_cover, local_precip, directional_rain, solar_cloud=0):
     if not (0 <= sun_alt <= 42): return 0
-    if cloud_cover >= 50:        return 0
+    if cloud_cover >= 40:        return 0
+    if solar_cloud >= 65:        return 0
     if local_precip > 0.0:       return 0
     if not directional_rain:     return 0
-    score = 100.0 - max(0.0, cloud_cover - 5) * 2.2
+    score = 100.0 - max(0.0, cloud_cover - 5) * 3.0
     return round(max(0.0, min(100.0, score)))
 
 # ── JMA 高解像度降水ナウキャスト ──────────────────────────────
@@ -384,6 +385,11 @@ def lambda_handler(event, context):
 
     anti_solar  = (sun_az + 180) % 360
 
+    solar_cloud = 0
+    if in_rainbow_window:
+        sol_lat, sol_lon = offset_coordinate(CENTER_LAT, CENTER_LON, sun_az, 20)
+        solar_cloud = lookup_weather(current_map, sol_lat, sol_lon)['cloud_cover']
+
     jma_map = None
     try:
         jma_map = fetch_jma_precip_map()
@@ -396,7 +402,7 @@ def lambda_handler(event, context):
         local_precip = _get_precip_at(lat, lon, current_map, jma_map)
         if in_rainbow_window:
             rain  = has_directional_rain(current_map, lat, lon, anti_solar, jma_map=jma_map)
-            score = rainbow_score(sun_alt, w['cloud_cover'], local_precip, rain)
+            score = rainbow_score(sun_alt, w['cloud_cover'], local_precip, rain, solar_cloud)
         else:
             rain  = False
             score = 0
@@ -455,6 +461,11 @@ def _build_and_upload_forecast(now, points, hourly_maps, hour_times):
         in_rainbow  = 0 <= h_alt <= 42
         anti_solar  = (h_az + 180) % 360
 
+        h_solar_cloud = 0
+        if in_rainbow:
+            sol_lat, sol_lon = offset_coordinate(CENTER_LAT, CENTER_LON, h_az, 20)
+            h_solar_cloud = lookup_weather(h_map, sol_lat, sol_lon)['cloud_cover']
+
         scores       = []
         precips      = []
         cloud_covers = []
@@ -462,7 +473,7 @@ def _build_and_upload_forecast(now, points, hourly_maps, hour_times):
             w = lookup_weather(h_map, lat, lon)
             if in_rainbow:
                 rain  = has_directional_rain(h_map, lat, lon, anti_solar)
-                score = rainbow_score(h_alt, w['cloud_cover'], w['precipitation'], rain)
+                score = rainbow_score(h_alt, w['cloud_cover'], w['precipitation'], rain, h_solar_cloud)
             else:
                 score = 0
             scores.append(score)
