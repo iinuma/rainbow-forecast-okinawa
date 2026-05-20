@@ -132,10 +132,10 @@ def _get_precip_at(lat, lon, weather_map, jma_map):
 # ── Rainbow score ─────────────────────────────────────────────
 def rainbow_score(sun_alt, cloud_cover, local_precip, directional_rain):
     if not (0 <= sun_alt <= 42): return 0
-    if cloud_cover >= 70:        return 0
+    if cloud_cover >= 50:        return 0
     if local_precip > 0.0:       return 0
     if not directional_rain:     return 0
-    score = 100.0 - max(0.0, cloud_cover - 30) * 1.5
+    score = 100.0 - max(0.0, cloud_cover - 5) * 2.2
     return round(max(0.0, min(100.0, score)))
 
 # ── JMA 高解像度降水ナウキャスト ──────────────────────────────
