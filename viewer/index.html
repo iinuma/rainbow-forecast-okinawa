@@ -70,7 +70,7 @@
 
     .legend {
       position: absolute;
-      bottom: 28px;
+      bottom: 22px;
       right: 10px;
       z-index: 1000;
       background: rgba(13,27,42,0.92);
@@ -96,7 +96,7 @@
     /* ── Forecast bar ── */
     #forecast-bar {
       position: absolute;
-      bottom: 4px;
+      bottom: 22px;
       left: 10px;
       z-index: 1000;
       background: rgba(13,27,42,0.92);
@@ -109,7 +109,7 @@
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
-      max-width: calc(100% - 180px);
+      max-width: calc(100% - 220px);
     }
     #forecast-bar .fb-label {
       font-size: 0.72rem;
@@ -118,7 +118,7 @@
     }
     .fb-btn {
       font-size: 0.75rem;
-      padding: 4px 10px;
+      padding: 4px 7px;
       border-radius: 6px;
       border: 1px solid rgba(255,255,255,0.15);
       background: rgba(255,255,255,0.06);
@@ -143,6 +143,17 @@
       border-color: #90cdf4;
       color: #fff;
     }
+    .fb-btn.has-rainbow {
+      border-color: rgba(94,231,122,0.9);
+      background: rgba(94,231,122,0.12);
+      color: #5ee77a;
+      font-weight: 700;
+    }
+    .fb-btn.has-chance {
+      border-color: rgba(246,173,85,0.9);
+      background: rgba(246,173,85,0.10);
+      color: #f6ad55;
+    }
     #play-btn {
       font-size: 0.85rem;
       padding: 4px 8px;
@@ -165,9 +176,11 @@
       white-space: nowrap;
     }
     #sun-window .win { color: rgba(94,231,122,0.85); }
+    .is-native .header-meta { display: none; }
   </style>
 </head>
 <body>
+<script>if (new URLSearchParams(location.search).get('native')) document.body.classList.add('is-native');</script>
 
 <header>
   <div>
@@ -268,8 +281,8 @@ function buildForecastButtons() {
     btn.className = 'fb-btn';
     btn.textContent = localLabel(frame.time_utc);
     btn.title = frame.time_utc + ' UTC · 最高スコア ' + frame.max_score;
-    if (frame.max_score >= 70)  btn.style.borderColor = 'rgba(94,231,122,0.4)';
-    else if (frame.max_score >= 40) btn.style.borderColor = 'rgba(246,173,85,0.4)';
+    if (frame.max_score >= 70)  btn.classList.add('has-rainbow');
+    else if (frame.max_score >= 40) btn.classList.add('has-chance');
     btn.onclick = () => selectFrame(idx);
     container.appendChild(btn);
   });
@@ -332,7 +345,8 @@ function renderForecastFrame(frame) {
       }).addTo(rainLayerGroup);
     }
 
-    const color = scoreColor(score);
+    const color      = scoreColor(score);
+    const cloudCover = frame.cloud_covers ? frame.cloud_covers[i] : '—';
     L.circleMarker([lat, lon], {
       radius: scoreRadius(score),
       color: 'transparent',
@@ -343,8 +357,10 @@ function renderForecastFrame(frame) {
       <div class="lf-popup">
         <div class="score-big" style="color:${color}">${score}</div>
         <div style="color:#888;font-size:0.75rem;margin-bottom:6px">予報スコア · ${localTime} JST</div>
+        <div class="row"><span class="key">雲量</span><span>${cloudCover}%</span></div>
         <div class="row"><span class="key">降水量</span><span>${precip} mm/h</span></div>
         <div class="row"><span class="key">太陽高度</span><span>${frame.sun_alt}°</span></div>
+        <div class="row"><span class="key">地点</span><span class="addr-text" data-lat="${lat}" data-lon="${lon}">取得中…</span></div>
       </div>
     `)
     .addTo(layerGroup);

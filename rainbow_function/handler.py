@@ -3,7 +3,7 @@ Rainbow Forecast Lambda — 沖縄版
 那覇中心 100km 圏内を 4km グリッドで走査し、虹スコアを S3 に保存。
 スコア 70+ のエリアが存在する場合、近隣デバイスに push 通知を送信する。
 """
-import json, math, urllib.request, os
+import json, math, urllib.request, os, struct, zlib
 from collections import defaultdict
 import boto3
 from boto3.dynamodb.conditions import Attr
@@ -109,22 +109,154 @@ def offset_coordinate(lat, lon, azimuth_deg, distance_km):
                               math.cos(d) - math.sin(lat1) * math.sin(lat2))
     return math.degrees(lat2), math.degrees(lon2)
 
-def has_directional_rain(weather_map, lat, lon, anti_solar_az, distances=(3, 5, 8)):
+def has_directional_rain(weather_map, lat, lon, anti_solar_az, distances=(10,), jma_map=None):
     for dist in distances:
         tlat, tlon = offset_coordinate(lat, lon, anti_solar_az, dist)
-        w = lookup_weather(weather_map, tlat, tlon)
-        if w['precipitation'] > 0.1:
+        precip = _get_precip_at(tlat, tlon, weather_map, jma_map)
+        if precip > 0.1:
             return True
     return False
+
+def _get_precip_at(lat, lon, weather_map, jma_map):
+    if jma_map is not None:
+        lat_per_km = 1.0 / 111.0
+        lon_per_km = 1.0 / (111.0 * math.cos(math.radians(CENTER_LAT)))
+        di = (lat - CENTER_LAT) / (WEATHER_KM * lat_per_km)
+        dj = (lon - CENTER_LON) / (WEATHER_KM * lon_per_km)
+        i  = max(-HALF_W, min(HALF_W, round(di)))
+        j  = max(-HALF_W, min(HALF_W, round(dj)))
+        if (i, j) in jma_map:
+            return jma_map[(i, j)]
+    return lookup_weather(weather_map, lat, lon)['precipitation']
 
 # ── Rainbow score ─────────────────────────────────────────────
 def rainbow_score(sun_alt, cloud_cover, local_precip, directional_rain):
     if not (0 <= sun_alt <= 42): return 0
     if cloud_cover >= 70:        return 0
-    if local_precip > 0.1:       return 0
+    if local_precip > 0.0:       return 0
     if not directional_rain:     return 0
     score = 100.0 - max(0.0, cloud_cover - 30) * 1.5
     return round(max(0.0, min(100.0, score)))
+
+# ── JMA 高解像度降水ナウキャスト ──────────────────────────────
+JMA_ZOOM      = 10
+JMA_TIMES_URL = 'https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json'
+JMA_TILE_URL  = 'https://www.jma.go.jp/bosai/jmatile/data/nowc/{bt}/none/{vt}/surf/hrpns/{z}/{x}/{y}.png'
+JMA_HEADERS   = {
+    'User-Agent': 'Mozilla/5.0 (compatible; rainbow-forecast/1.0)',
+    'Referer':    'https://www.jma.go.jp/bosai/nowc/',
+}
+# パレットインデックス → mm/h（JMA hrpns 10色パレット）
+_JMA_PRECIP   = [0.0, 0.0, 0.1, 0.5, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0]
+
+def _latlon_to_tile_px(lat, lon, z):
+    n   = 1 << z
+    x_f = (lon + 180.0) / 360.0 * n
+    lr  = math.radians(lat)
+    y_f = (1.0 - math.log(math.tan(lr) + 1.0 / math.cos(lr)) / math.pi) / 2.0 * n
+    tx, ty = int(x_f), int(y_f)
+    return tx, ty, int((x_f - tx) * 256), int((y_f - ty) * 256)
+
+def _parse_jma_tile(data):
+    pos = 8
+    width = height = 0
+    trans = []
+    idat  = []
+    while pos < len(data):
+        length = struct.unpack('>I', data[pos:pos+4])[0]
+        ct = data[pos+4:pos+8]
+        cd = data[pos+8:pos+8+length]
+        pos += 12 + length
+        if ct == b'IHDR':
+            width, height = struct.unpack('>II', cd[:8])
+        elif ct == b'tRNS':
+            trans = list(cd)
+        elif ct == b'IDAT':
+            idat.append(cd)
+        elif ct == b'IEND':
+            break
+    raw      = zlib.decompress(b''.join(idat))
+    row_bytes = (width + 1) // 2   # 4bit: 2px/byte
+    prev = bytearray(row_bytes)
+    rows = []
+    for row in range(height):
+        off  = row * (row_bytes + 1)
+        ft   = raw[off]
+        line = bytearray(raw[off+1:off+1+row_bytes])
+        if ft == 0:
+            cur = line
+        elif ft == 1:
+            cur = bytearray(row_bytes)
+            for i in range(row_bytes):
+                cur[i] = (line[i] + (cur[i-1] if i > 0 else 0)) & 0xFF
+        elif ft == 2:
+            cur = bytearray((line[i] + prev[i]) & 0xFF for i in range(row_bytes))
+        elif ft == 3:
+            cur = bytearray(row_bytes)
+            for i in range(row_bytes):
+                a = cur[i-1] if i > 0 else 0
+                cur[i] = (line[i] + (a + prev[i]) // 2) & 0xFF
+        elif ft == 4:
+            cur = bytearray(row_bytes)
+            for i in range(row_bytes):
+                a = cur[i-1] if i > 0 else 0
+                b = prev[i]; c = prev[i-1] if i > 0 else 0
+                p = a + b - c; pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
+                pr = a if pa<=pb and pa<=pc else (b if pb<=pc else c)
+                cur[i] = (line[i] + pr) & 0xFF
+        else:
+            cur = line
+        rows.append(cur)
+        prev = cur
+    return rows, width, height, trans
+
+def _jma_idx(rows, px, py):
+    b = rows[py][px // 2]
+    return (b >> 4) if (px % 2 == 0) else (b & 0x0F)
+
+def fetch_jma_precip_map():
+    """JMAナウキャストから {(i,j): mm/h} を返す。"""
+    req = urllib.request.Request(JMA_TIMES_URL, headers=JMA_HEADERS)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        times = json.loads(r.read())
+    bt = times[0]['basetime']
+    vt = times[0]['validtime']
+
+    lat_per_km = 1.0 / 111.0
+    lon_per_km = 1.0 / (111.0 * math.cos(math.radians(CENTER_LAT)))
+    tile_cache = {}
+    precip_map = {}
+    for i in range(-HALF_W, HALF_W + 1):
+        for j in range(-HALF_W, HALF_W + 1):
+            lat = CENTER_LAT + i * WEATHER_KM * lat_per_km
+            lon = CENTER_LON + j * WEATHER_KM * lon_per_km
+            tx, ty, px, py = _latlon_to_tile_px(lat, lon, JMA_ZOOM)
+            if (tx, ty) not in tile_cache:
+                url = JMA_TILE_URL.format(bt=bt, vt=vt, z=JMA_ZOOM, x=tx, y=ty)
+                try:
+                    req = urllib.request.Request(url, headers=JMA_HEADERS)
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        raw = r.read()
+                    tile_cache[(tx, ty)] = _parse_jma_tile(raw) if raw[:4] == b'\x89PNG' else None
+                except Exception as e:
+                    print(f'[JMA] tile ({tx},{ty}) err: {e}')
+                    tile_cache[(tx, ty)] = None
+            parsed = tile_cache.get((tx, ty))
+            if parsed:
+                rows, w, h, trans = parsed
+                if 0 <= px < w and 0 <= py < h:
+                    idx = _jma_idx(rows, px, py)
+                    if idx < len(trans) and trans[idx] == 0:
+                        precip_map[(i, j)] = 0.0
+                    else:
+                        precip_map[(i, j)] = _JMA_PRECIP[idx] if idx < len(_JMA_PRECIP) else 0.0
+                else:
+                    precip_map[(i, j)] = 0.0
+            else:
+                precip_map[(i, j)] = 0.0
+    ok = sum(1 for v in tile_cache.values() if v)
+    print(f'[JMA] bt={bt} tiles={ok}/{len(tile_cache)} pts={len(precip_map)}')
+    return precip_map
 
 # ── Open-Meteo 天気取得 ───────────────────────────────────────
 def fetch_weather_map():
@@ -251,12 +383,20 @@ def lambda_handler(event, context):
         return {'statusCode': 200, 'body': reason}
 
     anti_solar  = (sun_az + 180) % 360
+
+    jma_map = None
+    try:
+        jma_map = fetch_jma_precip_map()
+    except Exception as e:
+        print(f'[JMA] unavailable: {e} — using Open-Meteo precipitation')
+
     features    = []
     for (lat, lon) in points:
         w = lookup_weather(current_map, lat, lon)
+        local_precip = _get_precip_at(lat, lon, current_map, jma_map)
         if in_rainbow_window:
-            rain  = has_directional_rain(current_map, lat, lon, anti_solar)
-            score = rainbow_score(sun_alt, w['cloud_cover'], w['precipitation'], rain)
+            rain  = has_directional_rain(current_map, lat, lon, anti_solar, jma_map=jma_map)
+            score = rainbow_score(sun_alt, w['cloud_cover'], local_precip, rain)
         else:
             rain  = False
             score = 0
@@ -268,7 +408,7 @@ def lambda_handler(event, context):
                 'sun_alt':          round(sun_alt, 1),
                 'sun_az':           round(sun_az, 1),
                 'cloud_cover':      w['cloud_cover'],
-                'precip':           round(w['precipitation'], 2),
+                'precip':           round(local_precip, 2),
                 'directional_rain': rain,
             },
         })
@@ -315,8 +455,9 @@ def _build_and_upload_forecast(now, points, hourly_maps, hour_times):
         in_rainbow  = 0 <= h_alt <= 42
         anti_solar  = (h_az + 180) % 360
 
-        scores  = []
-        precips = []
+        scores       = []
+        precips      = []
+        cloud_covers = []
         for (lat, lon) in points:
             w = lookup_weather(h_map, lat, lon)
             if in_rainbow:
@@ -326,15 +467,17 @@ def _build_and_upload_forecast(now, points, hourly_maps, hour_times):
                 score = 0
             scores.append(score)
             precips.append(round(w['precipitation'], 2))
+            cloud_covers.append(w['cloud_cover'])
 
         frames.append({
-            'time_utc':   time_str,
-            'sun_alt':    round(h_alt, 1),
-            'sun_az':     round(h_az, 1),
-            'in_rainbow': in_rainbow,
-            'scores':     scores,
-            'precips':    precips,
-            'max_score':  max(scores),
+            'time_utc':    time_str,
+            'sun_alt':     round(h_alt, 1),
+            'sun_az':      round(h_az, 1),
+            'in_rainbow':  in_rainbow,
+            'scores':      scores,
+            'precips':     precips,
+            'cloud_covers': cloud_covers,
+            'max_score':   max(scores),
         })
 
     forecast = {
